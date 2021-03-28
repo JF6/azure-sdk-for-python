@@ -1,0 +1,7 @@
+[packaging]
+package_name = "azure-lgging-eventhub"
+package_pprint_name = "logging handler to EventHub"
+package_doc_id = "event-hub?view=azure-python-preview"
+is_stable = false
+need_msrestazure = false
+need_azuremgmtcore = false
