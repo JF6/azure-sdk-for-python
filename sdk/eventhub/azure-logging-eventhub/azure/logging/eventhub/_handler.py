@@ -7,7 +7,6 @@ import datetime
 import time
 import sys
 import json
-import atexit
 
 from azure.eventhub import EventHubProducerClient, EventData
 from azure.eventhub.exceptions import EventHubError, EventDataSendError, EventDataError
@@ -20,10 +19,9 @@ class EventHubHandler(logging.handlers.MemoryHandler):
         """Cleanup Eventhub client
         """
         super().close()
-        self.event_data_batch = None
         self.client.close()
 
-    def __init__(self, connection_str, eventhub_name, capacity=5, flushLevel=logging.ERROR, retries=[5, 30, 60]):
+    def __init__(self, connection_str, capacity=5, flushLevel=logging.ERROR, retries=[5, 30, 60]):
         """Constructor
 
         Args:
@@ -48,7 +46,6 @@ class EventHubHandler(logging.handlers.MemoryHandler):
         logging.getLogger("sys").propagate = False
 
         self.client = EventHubProducerClient.from_connection_string(connection_str)
-        self.event_data_batch = self.client.create_batch()
 
         self.first_record = None
         self.retries = retries
@@ -66,37 +63,47 @@ class EventHubHandler(logging.handlers.MemoryHandler):
 
         super().emit(record)
 
+    def _write_batch(self, event_data_batch):
+        retries = self.retries.copy()
+
+        retries.append(0)  # in order to ensure a try (or the last retry to go on)
+        while retries:
+            try:
+                self.client.send_batch(event_data_batch)
+            except Exception:  # Done on purpose : Objective is to recover whatever the exception is
+                waiting_time = retries.pop(0)
+                if retries:
+                    print("Exception, retrying in {} seconds".format(waiting_time), file=sys.stderr)
+                    time.sleep(waiting_time)
+                else:
+                    logging.Handler.handleError(self, self.first_record)
+            else:
+                break
+
     def flush(self):
         """
         Flush the records in Kusto
         """
+        event_data_batch = self.client.create_batch()
+
         if self.buffer:
             self.acquire()
             log_dict = [x.__dict__ for x in self.buffer].copy()
-            # convert to iso datetime as Kusto truncate the milliseconds if a float is provided.
+            # convert to iso datetime as Kusto truncates the milliseconds if a float is provided.
             for item in log_dict:
                 item["created"] = datetime.datetime.utcfromtimestamp(item.get("created", 0)).isoformat()
                 try:
-                    self.event_data_batch.add(event_data=EventData(json.dumps(item)))
+                    event_data_batch.add(event_data=EventData(json.dumps(item)))
                 except ValueError:
-                    pass
+                    self._write_batch(event_data_batch)
+                    event_data_batch = self.client.create_batch()
+                    event_data_batch.add(event_data=EventData(json.dumps(item)))
 
-            retries = self.retries.copy()
-            retries.append(0)  # in order to ensure a try (or the last retry to go on)
-            while retries:
-                try:
-                    self.client.send_batch(self.event_data_batch)
-                except Exception:  # Done on purpose : Objective is to recover whatever the exception is
-                    waiting_time = retries.pop(0)
-                    if retries:
-                        print("Exception, retrying in {} seconds".format(waiting_time), file=sys.stderr)
-                        time.sleep(waiting_time)
-                    else:
-                        logging.Handler.handleError(self, self.first_record)
-                else:
-                    break
+            if len(event_data_batch) >0:
+                self._write_batch(event_data_batch)
+
             self.first_record = None
             self.buffer.clear()
-            self.event_data_batch = None
-            self.event_data_batch = self.client.create_batch()
+            # self.event_data_batch = None
+            # self.event_data_batch = self.client.create_batch()
             self.release()
