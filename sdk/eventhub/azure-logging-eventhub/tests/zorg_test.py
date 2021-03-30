@@ -2,9 +2,10 @@ import os
 import logging
 from azure.logging.eventhub import EventHubHandler
 from azure.eventhub import EventData, EventHubProducerClient
+import uuid
 
 CNS = os.environ.get("CNS")
-CAP = 5000000
+CAP = 500000
 
 # cli = EventHubProducerClient.from_connection_string(CNS)
 # btc = cli.create_batch()
@@ -14,10 +15,10 @@ CAP = 5000000
 #     cli.send_batch(btc)
 
 logging.basicConfig(filename="zorg.log", filemode="w")
-kh = EventHubHandler(CNS, capacity=5000,  flushLevel=logging.ERROR)
-kh.setLevel(logging.INFO)
+kh = EventHubHandler(CNS, capacity=8192,  flushLevel=logging.ERROR)
+kh.setLevel(logging.DEBUG)
 logger = logging.getLogger()
 logging.getLogger().addHandler(kh)
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.DEBUG)
 for i in range(CAP+1):
-    logging.info("ZorgD%i" % i)
+    logging.debug(f"ZZorgD{i} - {uuid.uuid4()}")
