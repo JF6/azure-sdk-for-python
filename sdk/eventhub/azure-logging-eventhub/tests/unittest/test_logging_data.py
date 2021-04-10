@@ -1,9 +1,12 @@
 import platform
+import os
 import pytest
 import uamqp
 import logging
 from packaging import version
 from azure.eventhub import _common
+
+from mock import patch
 
 pytestmark = pytest.mark.skipif(platform.python_implementation() == "PyPy", reason="This is ignored for PyPy")
 
@@ -12,25 +15,67 @@ from azure.eventhub import EventData, EventDataBatch
 from azure.logging.eventhub import EventHubHandler  #, SingleEventHubHandler
 
 
-@pytest.mark.parametrize("test_input, expected_result",
-                         [("", ""), ("AAA", "AAA"), (None, ValueError), (["a", "b", "c"], "abc"), (b"abc", "abc")])
-def test_constructor(test_input, expected_result):
-    if isinstance(expected_result, type):
-        with pytest.raises(expected_result):
-            EventData(test_input)
-    else:
-        event_data = EventData(test_input)
-        assert event_data.body_as_str() == expected_result
-        assert event_data.partition_key is None
-        assert len(event_data.properties) == 0
-        assert event_data.enqueued_time is None
-        assert event_data.offset is None
-        assert event_data.sequence_number is None
-        assert len(event_data.system_properties) == 0
-        assert str(event_data) == "{{ body: '{}', properties: {{}} }}".format(expected_result)
-        assert repr(event_data) == "EventData(body='{}', properties={{}}, offset=None, sequence_number=None, partition_key=None, enqueued_time=None)".format(expected_result)
-        with pytest.raises(TypeError):
-            event_data.body_as_json()
+def mocked_client(*args, **kwargs):
+    class MockDataBatch:
+        def add(self, *args, **kwargs):
+            pass
+        def __len__(self):
+            return 0
+
+    class MockResponse:
+        """Mock class for EventHub."""
+        def __init__(self):
+            self.headers = None
+
+        def create_batch(self):
+            """Get json data from response."""
+            return MockDataBatch()
+
+        def close(self):
+            pass
+
+    return MockResponse()
+
+
+@patch("azure.eventhub.EventHubProducerClient.from_connection_string", side_effect=mocked_client)
+@pytest.mark.parametrize("test_level",
+                         ["INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"])
+def test_basic_logging(mock_execute, test_level):
+    logging.basicConfig()
+    log_fn = getattr(logging, test_level.lower())
+    log_msg = f"tst - {test_level}"
+    # CNS = os.environ.get("CNS")
+    kh = EventHubHandler("CNS", capacity=400, 
+     flushLevel=logging.CRITICAL+1,  # In order to ensuure buffer is not flushed
+     retry_total=10)
+    kh.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    root.addHandler(kh)
+
+    root.setLevel(logging.DEBUG)
+    log_fn(log_msg)
+    assert(len(kh.buffer)==1)
+    assert(kh.buffer[0].levelname == test_level)
+    assert(kh.buffer[0].msg == log_msg)
+
+@patch("azure.eventhub.EventHubProducerClient.from_connection_string", side_effect=mocked_client)
+@pytest.mark.parametrize("test_level",
+                         ["INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"])
+def test_logging_flush(mock_execute, test_level):
+    log_fn = getattr(logging, test_level.lower())
+    log_level = getattr(logging, test_level)
+    logging.basicConfig()
+    # CNS = os.environ.get("CNS")
+    kh = EventHubHandler("CNS", capacity=400, 
+     flushLevel=log_level)
+
+    kh.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    root.addHandler(kh)
+    root.setLevel(logging.DEBUG)
+    log_fn(f"tst - {test_level}")
+    assert(len(kh.buffer)==0)
+
 
 
 def test_body_json():

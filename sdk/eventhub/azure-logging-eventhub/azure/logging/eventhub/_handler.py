@@ -16,7 +16,7 @@ class EventHubHandler(logging.handlers.MemoryHandler):
 
     def __init__(
         self, connection_str: str, capacity=8192, flushLevel=logging.ERROR, **kwargs
-    ) -> None:
+    ):
         """Constructor
 
         Args:
