@@ -3,6 +3,8 @@ import os
 import pytest
 import uamqp
 import logging
+import json
+import threading
 from packaging import version
 from azure.eventhub import _common
 
@@ -14,11 +16,19 @@ pytestmark = pytest.mark.skipif(platform.python_implementation() == "PyPy", reas
 from azure.eventhub import EventData, EventDataBatch
 from azure.logging.eventhub import EventHubHandler  #, SingleEventHubHandler
 
+class KustoJsonFormatter(logging.Formatter):
+    def format(self, record):
+        item = record.message.upper()
+        return item
+
+formatted_msg = ""
 
 def mocked_client(*args, **kwargs):
     class MockDataBatch:
         def add(self, *args, **kwargs):
-            pass
+            global formatted_msg
+            formatted_msg = kwargs['event_data'].body_as_str()
+            
         def __len__(self):
             return 0
 
@@ -35,6 +45,7 @@ def mocked_client(*args, **kwargs):
             pass
 
     return MockResponse()
+
 
 
 @patch("azure.eventhub.EventHubProducerClient.from_connection_string", side_effect=mocked_client)
@@ -77,78 +88,48 @@ def test_logging_flush(mock_execute, test_level):
     assert(len(kh.buffer)==0)
 
 
+@patch("azure.eventhub.EventHubProducerClient.from_connection_string", side_effect=mocked_client)
+@pytest.mark.parametrize("test_message",
+                         ["message1", "Message2", "Message3"])
+def test_custom_format_logging(mock_execute, test_message):
+    global formatted_msg
 
-def test_body_json():
-    event_data = EventData('{"a":"b"}')
-    assert str(event_data) == "{ body: '{\"a\":\"b\"}', properties: {} }"
-    assert repr(event_data) == "EventData(body='{\"a\":\"b\"}', properties={}, offset=None, sequence_number=None, partition_key=None, enqueued_time=None)"
-    jo = event_data.body_as_json()
-    assert jo["a"] == "b"
+    logging.basicConfig()
+    kh = EventHubHandler("CNS", capacity=400, 
+     flushLevel=logging.INFO,  # In order to ensuure buffer is not flushed
+     retry_total=10)
+    fmt = KustoJsonFormatter()
+    kh.setFormatter(fmt)
+    kh.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    root.addHandler(kh)
 
-
-def test_body_wrong_json():
-    event_data = EventData('aaa')
-    with pytest.raises(TypeError):
-        event_data.body_as_json()
-
-
-def test_app_properties():
-    app_props = {"a": "b"}
-    event_data = EventData("")
-    event_data.properties = app_props
-    assert str(event_data) == "{ body: '', properties: {'a': 'b'} }"
-    assert repr(event_data) == "EventData(body='', properties={'a': 'b'}, offset=None, sequence_number=None, partition_key=None, enqueued_time=None)"
-    assert event_data.properties["a"] == "b"
+    root.setLevel(logging.DEBUG)
+    logging.info(test_message)
+    assert(formatted_msg == test_message.upper())
 
 
-def test_sys_properties():
-    properties = uamqp.message.MessageProperties()
-    properties.message_id = "message_id"
-    properties.user_id = "user_id"
-    properties.to = "to"
-    properties.subject = "subject"
-    properties.reply_to = "reply_to"
-    properties.correlation_id = "correlation_id"
-    properties.content_type = "content_type"
-    properties.content_encoding = "content_encoding"
-    properties.absolute_expiry_time = 1
-    properties.creation_time = 1
-    properties.group_id = "group_id"
-    properties.group_sequence = 1
-    properties.reply_to_group_id = "reply_to_group_id"
-    message = uamqp.Message(properties=properties)
-    message.annotations = {_common.PROP_OFFSET: "@latest"}
-    ed = EventData._from_message(message)  # type: EventData
 
-    assert ed.system_properties[_common.PROP_OFFSET] == "@latest"
-    assert ed.system_properties[_common.PROP_CORRELATION_ID] == properties.correlation_id
-    assert ed.system_properties[_common.PROP_MESSAGE_ID] == properties.message_id
-    assert ed.system_properties[_common.PROP_CONTENT_ENCODING] == properties.content_encoding
-    assert ed.system_properties[_common.PROP_CONTENT_TYPE] == properties.content_type
-    assert ed.system_properties[_common.PROP_USER_ID] == properties.user_id
-    assert ed.system_properties[_common.PROP_TO] == properties.to
-    assert ed.system_properties[_common.PROP_SUBJECT] == properties.subject
-    assert ed.system_properties[_common.PROP_REPLY_TO] == properties.reply_to
-    assert ed.system_properties[_common.PROP_ABSOLUTE_EXPIRY_TIME] == properties.absolute_expiry_time
-    assert ed.system_properties[_common.PROP_CREATION_TIME] == properties.creation_time
-    assert ed.system_properties[_common.PROP_GROUP_ID] == properties.group_id
-    assert ed.system_properties[_common.PROP_GROUP_SEQUENCE] == properties.group_sequence
-    assert ed.system_properties[_common.PROP_REPLY_TO_GROUP_ID] == properties.reply_to_group_id
+@patch("azure.eventhub.EventHubProducerClient.from_connection_string", side_effect=mocked_client)
+def test_mt_logging(mock_execute):
+    def log_it(nb_of_messages):
+        for i in range(nb_of_messages):
+            print(f'{i}')
+            logging.info("log it")
 
+    logging.basicConfig()
+    kh = EventHubHandler("CNS", capacity=4000, 
+     flushLevel=logging.CRITICAL+1,  # In order to ensuure buffer is not flushed
+     retry_total=10)
+    kh.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    root.addHandler(kh)
 
-def test_event_data_batch():
-    batch = EventDataBatch(max_size_in_bytes=100, partition_key="par")
-    batch.add(EventData("A"))
-    assert str(batch) == "EventDataBatch(max_size_in_bytes=100, partition_id=None, partition_key='par', event_count=1)"
-    assert repr(batch) == "EventDataBatch(max_size_in_bytes=100, partition_id=None, partition_key='par', event_count=1)"
-
-    # In uamqp v1.2.8, the encoding size of a message has changed. delivery_count in message header is now set to 0
-    # instead of None according to the C spec.
-    # This uamqp change is transparent to EH users so it's not considered as a breaking change. However, it's breaking
-    # the unit test here. The solution is to add backward compatibility in test.
-    if version.parse(uamqp.__version__) >= version.parse("1.2.8"):
-        assert batch.size_in_bytes == 97 and len(batch) == 1
-    else:
-        assert batch.size_in_bytes == 89 and len(batch) == 1
-    with pytest.raises(ValueError):
-        batch.add(EventData("A"))
+    thread_list = []
+    for thr in range(20):
+        t = threading.Thread(target=log_it, args=(10,))
+        t.start()
+        thread_list.append(t)
+    for i in thread_list:
+        i.join()
+    assert(len(kh.buffer)==200)
