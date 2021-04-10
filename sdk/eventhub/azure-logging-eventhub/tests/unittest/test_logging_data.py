@@ -1,6 +1,7 @@
 import platform
 import pytest
 import uamqp
+import logging
 from packaging import version
 from azure.eventhub import _common
 
@@ -8,6 +9,7 @@ pytestmark = pytest.mark.skipif(platform.python_implementation() == "PyPy", reas
 
 
 from azure.eventhub import EventData, EventDataBatch
+from azure.logging.eventhub import EventHubHandler  #, SingleEventHubHandler
 
 
 @pytest.mark.parametrize("test_input, expected_result",

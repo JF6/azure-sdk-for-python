@@ -59,18 +59,18 @@ root.addHandler(qh)
 root.setLevel(logging.DEBUG)
 
 
-x=[]
-for i in range(10):
-    t=threading.Thread(target=lg, args=(CAP,))
-    x.append(t)
-    t.start()
-for i in range(CAP+1):
-    logging.debug(f"ZZorgL{i} - {uuid.uuid4()}")
+# x=[]
+# for i in range(10):
+#     t=threading.Thread(target=lg, args=(CAP,))
+#     x.append(t)
+#     t.start()
+# for i in range(CAP+1):
+#     logging.debug(f"ZZorgL{i} - {uuid.uuid4()}")
 
-for i in x:
-    i.join()
+# for i in x:
+#     i.join()
 
 # ql.stop()
 
-# for i in range(CAP+1):
-#     logging.debug(f"ZZorgL{i} - {uuid.uuid4()}")
+for i in range(CAP+1):
+    logging.debug(f"ZZorgL{i} - {uuid.uuid4()}")
