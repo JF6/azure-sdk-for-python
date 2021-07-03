@@ -6,6 +6,8 @@ from azure.eventhub import EventData, EventHubProducerClient
 import uuid
 import json
 import datetime
+import time
+import random
 import threading
 import queue
 from logging.handlers import QueueHandler, QueueListener
@@ -26,7 +28,7 @@ class KustoJsonFormatter(Formatter):
 
 
 CNS = os.environ.get("CNS")
-CAP = 50 # 500000
+CAP = 500000
 
 # cli = EventHubProducerClient.from_connection_string(CNS)
 # btc = cli.create_batch()
@@ -73,4 +75,6 @@ root.setLevel(logging.DEBUG)
 # ql.stop()
 
 for i in range(CAP+1):
-    logging.debug(f"ZZorgL{i} - {uuid.uuid4()}")
+    for j in range(10):
+        logging.debug(f"ZZorgL{i} - {uuid.uuid4()}")
+    # timce.sleep(random.random())

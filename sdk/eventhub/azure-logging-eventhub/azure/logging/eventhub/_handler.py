@@ -42,7 +42,8 @@ class EventHubHandler(logging.handlers.MemoryHandler):
     def emit(self, record):
         """
         Emit a record.
-        Just add the record in the records list
+        Just add the record in the records list, 
+            and keep track of the first record in case of a catastrophic failure
         """
 
         if not self.buffer:
@@ -61,6 +62,7 @@ class EventHubHandler(logging.handlers.MemoryHandler):
             try:
                 self.client.send_batch(event_data_batch)
             except Exception:  # pylint: disable=broad-except # Done on purpose : Objective is to recover whatever the exception is
+                # print("Error...")
                 self.handleError(self.first_record)
 
     def flush(self):
